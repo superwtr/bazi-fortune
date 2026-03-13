@@ -6,11 +6,15 @@
  * Two charts with different pillars will get meaningfully different readings.
  */
 
-import { 
+import {
   HeavenlyStem, EarthlyBranch, Element, Language, BirthInput,
   FourPillars, ElementCount, TenGodName, DayunPeriod, StemBranch,
-  BaziAnalysis, YearEntry 
+  BaziAnalysis, YearEntry, ExtendedBaziAnalysis, FormationResult,
+  ShenshaEntry, RootStrengthResult, Season, SeasonalDMReading,
+  NayinInterpretation, TimingWindow, BilingualText,
 } from './types';
+import { TEN_GOD_POSITIONAL } from './data/ten-god-positional';
+import { getHexagramReading } from './data/yijing';
 
 // ─── Re-import constants we need ─────────────────────────────────
 
@@ -76,6 +80,15 @@ interface ChartFeatures {
   sealStarCount: number;
   // Output star (食伤) prominence
   outputStarCount: number;
+  // Extended features (from ExtendedBaziAnalysis)
+  formation: FormationResult | null;
+  shensha: ShenshaEntry[];
+  rootStrength: RootStrengthResult | null;
+  seasonName: Season | null;
+  seasonalDMReading: SeasonalDMReading | null;
+  nayinInterpretation: NayinInterpretation | null;
+  peachBlossom: ShenshaEntry | null;
+  timingWindows: TimingWindow[];
 }
 
 function getTG(dm: string, other: string): TenGodName {
@@ -88,7 +101,7 @@ function getTG(dm: string, other: string): TenGodName {
   return '比肩';
 }
 
-export function extractFeatures(a: BaziAnalysis, input: BirthInput): ChartFeatures {
+export function extractFeatures(a: BaziAnalysis | ExtendedBaziAnalysis, input: BirthInput): ChartFeatures {
   const p = a.pillars;
   const dm = a.dayMaster;
   const de = a.dayMasterElement;
@@ -179,6 +192,13 @@ export function extractFeatures(a: BaziAnalysis, input: BirthInput): ChartFeatur
   // Water-fire tension
   const hasWaterFireTension = ec.water >= 2 && ec.fire >= 2;
 
+  // Extended features (only available when using ExtendedBaziAnalysis)
+  const isExtended = 'formation' in a;
+  const ext = isExtended ? (a as ExtendedBaziAnalysis) : null;
+
+  const shensha = ext?.shensha || [];
+  const peachBlossom = shensha.find(s => s.name === '桃花') || null;
+
   return {
     internalClashes, internalHarmonies, stemCombos,
     selfPunish: selfPunishActual,
@@ -193,6 +213,14 @@ export function extractFeatures(a: BaziAnalysis, input: BirthInput): ChartFeatur
     woodWeak: ec.wood < 1,
     metalWeak: ec.metal < 1,
     wealthStarCount, officerStarCount, sealStarCount, outputStarCount,
+    formation: ext?.formation || null,
+    shensha,
+    rootStrength: ext?.rootStrength || null,
+    seasonName: ext?.season || null,
+    seasonalDMReading: ext?.seasonalReading || null,
+    nayinInterpretation: ext?.nayinInterpretation || null,
+    peachBlossom,
+    timingWindows: ext?.timingWindows || [],
   };
 }
 
@@ -255,7 +283,31 @@ export function generateDayMasterReading(f: ChartFeatures, L: boolean): { icon: 
       : `Day Master ${f.dmStem} (${f.dmYinYang === 'yang' ? 'Yang' : 'Yin'} ${EL_EN[f.dmElement]}) is on the gentler side — ${f.seasonInPhase ? 'in season but outnumbered' : 'out of season'}. Needs Seal and Peer support to fully activate. ${f.sealStarCount > 0 ? 'Fortunately, hidden Seal stars provide backup.' : 'Seal stars are absent — actively seek institutional backing and mentors.'}`;
   }
   
-  return { icon: db.icon, nameZh: db.nameZh, nameEn: db.nameEn, text: L ? db.zhFull : db.enFull, strengthText: sText };
+  // Seasonal variation text from 《穷通宝鉴》
+  let seasonalText = '';
+  if (f.seasonalDMReading) {
+    const sr = f.seasonalDMReading;
+    if (L) {
+      seasonalText = `\n\n【当令表现】${sr.description.zh}\n\n【调候建议】${sr.favorableAdvice.zh}`;
+    } else {
+      seasonalText = `\n\n[Seasonal Expression] ${sr.description.en}\n\n[Balancing Advice] ${sr.favorableAdvice.en}`;
+    }
+  }
+
+  // Root strength assessment
+  let rootText = '';
+  if (f.rootStrength) {
+    const rs = f.rootStrength;
+    if (L) {
+      rootText = `\n\n【根气分析】${rs.description.zh}`;
+    } else {
+      rootText = `\n\n[Root Strength] ${rs.description.en}`;
+    }
+  }
+
+  const fullText = (L ? db.zhFull : db.enFull) + seasonalText + rootText;
+
+  return { icon: db.icon, nameZh: db.nameZh, nameEn: db.nameEn, text: fullText, strengthText: sText };
 }
 
 export function generateChartStructure(a: BaziAnalysis, f: ChartFeatures, L: boolean): string {
@@ -303,7 +355,41 @@ export function generateChartStructure(a: BaziAnalysis, f: ChartFeatures, L: boo
     if (L) parts.push(`五行缺${f.missingElements.map(e => EL_CN[e]).join('、')}，需要后天补充——通过方位、颜色、行业、饮食来弥补。`);
     else parts.push(`Missing elements: ${f.missingElements.map(e => EL_EN[e]).join(', ')} — compensate through environment, colors, career choice, and diet.`);
   }
-  
+
+  // Formation narrative
+  if (f.formation && f.formation.type !== '无格局') {
+    const fm = f.formation;
+    if (L) {
+      parts.push(`\n\n【格局】命局成${fm.type}（${fm.quality === 'noble' ? '贵格' : fm.quality === 'positive' ? '吉格' : fm.quality === 'neutral' ? '中性格' : '挑战格'}）。${fm.description.zh}`);
+      if (fm.careerHint.zh) parts.push(`格局事业提示：${fm.careerHint.zh}`);
+      if (fm.warnings.length > 0) parts.push(`注意：${fm.warnings.map(w => w.zh).join('；')}`);
+    } else {
+      parts.push(`\n\n[Formation] Your chart forms a ${fm.type} pattern (${fm.quality}). ${fm.description.en}`);
+      if (fm.careerHint.en) parts.push(`Formation career hint: ${fm.careerHint.en}`);
+      if (fm.warnings.length > 0) parts.push(`Watch out: ${fm.warnings.map(w => w.en).join('; ')}`);
+    }
+  }
+
+  // Shensha highlights (top auspicious and inauspicious)
+  if (f.shensha.length > 0) {
+    const auspicious = f.shensha.filter(s => s.category === 'auspicious');
+    const inauspicious = f.shensha.filter(s => s.category === 'inauspicious');
+    const special = f.shensha.filter(s => s.category === 'special');
+
+    if (auspicious.length > 0) {
+      if (L) parts.push(`\n\n【吉星】${auspicious.map(s => `${s.name}（${s.position}）`).join('、')}——${auspicious[0].description.zh}`);
+      else parts.push(`\n\n[Auspicious Stars] ${auspicious.map(s => `${s.name} (${s.position})`).join(', ')} — ${auspicious[0].description.en}`);
+    }
+    if (inauspicious.length > 0) {
+      if (L) parts.push(`【凶星】${inauspicious.map(s => `${s.name}（${s.position}）`).join('、')}——${inauspicious[0].description.zh}`);
+      else parts.push(`[Challenging Stars] ${inauspicious.map(s => `${s.name} (${s.position})`).join(', ')} — ${inauspicious[0].description.en}`);
+    }
+    if (special.length > 0) {
+      if (L) parts.push(`【特殊星】${special.map(s => `${s.name}（${s.position}）`).join('、')}——${special[0].description.zh}`);
+      else parts.push(`[Special Stars] ${special.map(s => `${s.name} (${s.position})`).join(', ')} — ${special[0].description.en}`);
+    }
+  }
+
   return parts.join(' ');
 }
 
@@ -422,7 +508,42 @@ export function generateCareerReading(a: BaziAnalysis, f: ChartFeatures, L: bool
     if (L) parts.push(`五行缺${missing.map(e => EL_CN[e]).join('、')}——${missing.includes('fire') ? '缺火则缺行动力和曝光度，需主动争取展示机会。' : ''}${missing.includes('metal') ? '缺金则缺决断力，决策时容易犹豫不决。' : ''}${missing.includes('water') ? '缺水则缺灵活性，需要培养应变能力。' : ''}${missing.includes('wood') ? '缺木则缺持续成长力，需要持续学习投资自己。' : ''}${missing.includes('earth') ? '缺土则缺稳定性，需要找到一个"锚定点"。' : ''}`);
     else parts.push(`Missing ${missing.map(e => EL_EN[e]).join(' and ')} — ${missing.includes('fire') ? 'lacking Fire means less visibility and drive; proactively seek exposure. ' : ''}${missing.includes('metal') ? 'lacking Metal means indecisiveness; train yourself to commit faster. ' : ''}${missing.includes('water') ? 'lacking Water means less adaptability; cultivate flexibility. ' : ''}${missing.includes('wood') ? 'lacking Wood means growth stalls; invest continuously in learning. ' : ''}${missing.includes('earth') ? 'lacking Earth means instability; find an anchor point. ' : ''}`);
   }
-  
+
+  // Formation-specific career advice
+  if (f.formation && f.formation.type !== '无格局') {
+    const fm = f.formation;
+    if (L) parts.push(`【格局事业指引】${fm.careerHint.zh}`);
+    else parts.push(`[Formation Career Guidance] ${fm.careerHint.en}`);
+  }
+
+  // Shensha career implications
+  const careerShensha = f.shensha.filter(s =>
+    ['文昌', '驿马', '将星', '学堂', '天乙贵人'].includes(s.name)
+  );
+  if (careerShensha.length > 0) {
+    if (L) {
+      const hints = careerShensha.map(s => {
+        if (s.name === '文昌') return '文昌星助学业和考试运，适合学术、文化、教育相关领域';
+        if (s.name === '驿马') return '驿马星主流动变化，适合需要出差、外派或跨境的事业';
+        if (s.name === '将星') return '将星主领导力，有统帅才能，适合管理岗位';
+        if (s.name === '学堂') return '学堂星利深造，适合终身学习型行业';
+        if (s.name === '天乙贵人') return '天乙贵人助力强大，关键时刻总有贵人相助';
+        return '';
+      }).filter(Boolean);
+      parts.push(`【神煞事业影响】${hints.join('；')}。`);
+    } else {
+      const hints = careerShensha.map(s => {
+        if (s.name === '文昌') return 'Academic Star boosts scholarly pursuits and exams — education, culture, publishing';
+        if (s.name === '驿马') return 'Traveling Horse brings mobility — careers involving travel, relocation, or international scope';
+        if (s.name === '将星') return 'General Star confers leadership ability — management and command roles';
+        if (s.name === '学堂') return 'Academy Star favors lifelong learning — research and skill-intensive industries';
+        if (s.name === '天乙贵人') return 'Heavenly Noble — powerful mentor energy, help arrives at critical moments';
+        return '';
+      }).filter(Boolean);
+      parts.push(`[Star Influences on Career] ${hints.join('. ')}.`);
+    }
+  }
+
   return parts.join('\n\n');
 }
 
@@ -459,6 +580,17 @@ export function generateRelationshipReading(a: BaziAnalysis, f: ChartFeatures, L
     
     parts.push(f.isStrong ? '日主偏强，感情中宜多包容让步——以柔克刚方能和谐。' : '日主偏弱，需要伴侣的支持和理解，宜找五行互补之人。');
     parts.push(`从择偶角度，${EL_CN[a.favorableElement]}型的伴侣与你最契合。`);
+
+    // Peach blossom
+    if (f.peachBlossom) {
+      parts.push(`命带桃花（${f.peachBlossom.position}${f.peachBlossom.branch}）——${f.peachBlossom.description.zh}`);
+    }
+
+    // Marriage timing windows
+    const marriageWindows = f.timingWindows.filter(tw => tw.type === 'marriage');
+    if (marriageWindows.length > 0) {
+      parts.push(`【婚恋窗口期】${marriageWindows.map(tw => tw.description.zh).join(' ')}`);
+    }
   } else {
     parts.push(`Spouse Palace (Day Branch): ${f.spouseBranch} (${EL_EN[spEl]}).`);
     
@@ -485,8 +617,19 @@ export function generateRelationshipReading(a: BaziAnalysis, f: ChartFeatures, L
     
     parts.push(f.isStrong ? "As a strong Day Master, practice patience and flexibility in relationships. Softness creates harmony." : 'Seek a partner who supports and complements your energy.');
     parts.push(`Elementally, a ${EL_EN[a.favorableElement]}-type partner suits you best.`);
+
+    // Peach blossom
+    if (f.peachBlossom) {
+      parts.push(`Peach Blossom star present (${f.peachBlossom.position} ${f.peachBlossom.branch}) — ${f.peachBlossom.description.en}`);
+    }
+
+    // Marriage timing windows
+    const marriageWindows = f.timingWindows.filter(tw => tw.type === 'marriage');
+    if (marriageWindows.length > 0) {
+      parts.push(`[Marriage Windows] ${marriageWindows.map(tw => tw.description.en).join(' ')}`);
+    }
   }
-  
+
   return parts.join(' ');
 }
 
@@ -517,6 +660,18 @@ export function generateHealthReading(a: BaziAnalysis, f: ChartFeatures, L: bool
     
     parts.push(f.isStrong ? '身强的人容易"火旺伤阴"，需注意休息和情绪管理。' : '身弱的人容易疲劳和免疫力低下，需加强锻炼和营养补充。');
     parts.push(`保养建议：多接触${EL_CN[a.favorableElement]}属性的环境和食物。运动非常重要——生${EL_CN[PROD[a.dayMasterElement]]}耗${EL_CN[a.dayMasterElement]}，保持元素流通。`);
+
+    // Excess element organ risks
+    if (f.excessElements.length > 0) {
+      const excessOrgans = f.excessElements.map(e => `${EL_CN[e]}过旺→注意${organs[e].zh}`);
+      parts.push(`过旺元素健康提示：${excessOrgans.join('；')}。`);
+    }
+
+    // Health risk timing windows
+    const healthWindows = f.timingWindows.filter(tw => tw.type === 'health_risk');
+    if (healthWindows.length > 0) {
+      parts.push(`【健康关注期】${healthWindows.slice(0, 3).map(tw => tw.description.zh).join(' ')}`);
+    }
   } else {
     parts.push(`Elemental weak point: ${EL_EN[weakest[0]]} (${weakest[1].toFixed(1)}) — watch your ${w.en}.`);
     
@@ -530,20 +685,57 @@ export function generateHealthReading(a: BaziAnalysis, f: ChartFeatures, L: bool
     
     parts.push(f.isStrong ? 'Strong constitutions tend toward burnout and inflammation. Prioritize rest and emotional regulation.' : 'Gentler constitutions are prone to fatigue and immune weakness. Strengthen through exercise and nutrition.');
     parts.push(`Maintain ${EL_EN[a.favorableElement]}-aligned environments. Exercise is critical — it generates ${EL_EN[PROD[a.dayMasterElement]]} and keeps elements circulating.`);
+
+    // Excess element organ risks
+    if (f.excessElements.length > 0) {
+      const excessOrgans = f.excessElements.map(e => `${EL_EN[e]} excess → watch ${organs[e].en}`);
+      parts.push(`Excess element risks: ${excessOrgans.join('; ')}.`);
+    }
+
+    // Health risk timing windows
+    const healthWindows = f.timingWindows.filter(tw => tw.type === 'health_risk');
+    if (healthWindows.length > 0) {
+      parts.push(`[Health Watch Periods] ${healthWindows.slice(0, 3).map(tw => tw.description.en).join(' ')}`);
+    }
   }
-  
+
   return parts.join(' ');
 }
 
 export function generateTrajectory(a: BaziAnalysis, f: ChartFeatures, birthYear: number, L: boolean): string {
   const dy = a.dayun;
   if (dy.length < 4) return '';
-  
+
+  const parts: string[] = [];
+
   if (L) {
-    return `人生轨迹三段论：\n\n• 基础期（约${dy[0].startAge}–${dy[0].endAge}岁，${birthYear + dy[0].startAge}–${birthYear + dy[0].endAge}年）：走${dy[0].stemBranch.stem}${dy[0].stemBranch.branch}运（${dy[0].tenGod}）。${dy[0].tenGod === '食神' || dy[0].tenGod === '伤官' ? '食伤运——智识成长和表达能力发展期。' : dy[0].tenGod === '正印' || dy[0].tenGod === '偏印' ? '印星运——学业顺利，有贵人扶持。' : dy[0].tenGod === '正官' || dy[0].tenGod === '七杀' ? '官杀运——纪律性和抗压能力在此期间奠基。' : '基础建设期，为后续发力蓄能。'}\n\n• 黄金期（约${dy[1].startAge}–${dy[2].endAge}岁，${birthYear + dy[1].startAge}–${birthYear + dy[2].endAge}年）：${dy[1].stemBranch.stem}${dy[1].stemBranch.branch}→${dy[2].stemBranch.stem}${dy[2].stemBranch.branch}运（${dy[1].tenGod}→${dy[2].tenGod}）。这是你事业和财富的主建设期——${dy[1].tenGod === '正财' || dy[1].tenGod === '偏财' ? '财运直接进入正轨' : dy[1].tenGod === '正官' || dy[1].tenGod === '七杀' ? '权力和地位在此期间确立' : dy[1].tenGod === '食神' || dy[1].tenGod === '伤官' ? '才华变现的关键窗口' : '核心能力在此期间成形'}。\n\n• 收获期（${birthYear + dy[3].startAge}年后）：${dy[3].stemBranch.stem}${dy[3].stemBranch.branch}运开始。${dy[3].tenGod === '正财' || dy[3].tenGod === '偏财' ? '财运达到峰值' : dy[3].tenGod === '正官' || dy[3].tenGod === '七杀' ? '社会地位和影响力到达顶点' : '运势进入新的转型周期'}。但也需要主动管理健康和精力分配。`;
+    parts.push(`人生轨迹三段论：\n\n• 基础期（约${dy[0].startAge}–${dy[0].endAge}岁，${birthYear + dy[0].startAge}–${birthYear + dy[0].endAge}年）：走${dy[0].stemBranch.stem}${dy[0].stemBranch.branch}运（${dy[0].tenGod}）。${dy[0].tenGod === '食神' || dy[0].tenGod === '伤官' ? '食伤运——智识成长和表达能力发展期。' : dy[0].tenGod === '正印' || dy[0].tenGod === '偏印' ? '印星运——学业顺利，有贵人扶持。' : dy[0].tenGod === '正官' || dy[0].tenGod === '七杀' ? '官杀运——纪律性和抗压能力在此期间奠基。' : '基础建设期，为后续发力蓄能。'}\n\n• 黄金期（约${dy[1].startAge}–${dy[2].endAge}岁，${birthYear + dy[1].startAge}–${birthYear + dy[2].endAge}年）：${dy[1].stemBranch.stem}${dy[1].stemBranch.branch}→${dy[2].stemBranch.stem}${dy[2].stemBranch.branch}运（${dy[1].tenGod}→${dy[2].tenGod}）。这是你事业和财富的主建设期——${dy[1].tenGod === '正财' || dy[1].tenGod === '偏财' ? '财运直接进入正轨' : dy[1].tenGod === '正官' || dy[1].tenGod === '七杀' ? '权力和地位在此期间确立' : dy[1].tenGod === '食神' || dy[1].tenGod === '伤官' ? '才华变现的关键窗口' : '核心能力在此期间成形'}。\n\n• 收获期（${birthYear + dy[3].startAge}年后）：${dy[3].stemBranch.stem}${dy[3].stemBranch.branch}运开始。${dy[3].tenGod === '正财' || dy[3].tenGod === '偏财' ? '财运达到峰值' : dy[3].tenGod === '正官' || dy[3].tenGod === '七杀' ? '社会地位和影响力到达顶点' : '运势进入新的转型周期'}。但也需要主动管理健康和精力分配。`);
+  } else {
+    parts.push(`Your life unfolds in three acts:\n\n• Foundation (ages ~${dy[0].startAge}–${dy[0].endAge}, ${birthYear + dy[0].startAge}–${birthYear + dy[0].endAge}): ${dy[0].stemBranch.stem}${dy[0].stemBranch.branch} decade — ${TG_EN[dy[0].tenGod]}. ${dy[0].tenGod === '食神' || dy[0].tenGod === '伤官' ? 'Expression era — intellectual growth and communication skills develop.' : dy[0].tenGod === '正印' || dy[0].tenGod === '偏印' ? 'Seal era — academic success and mentor support.' : dy[0].tenGod === '正官' || dy[0].tenGod === '七杀' ? 'Authority era — discipline and resilience are forged here.' : 'Foundation-building, storing energy for later acceleration.'}\n\n• Prime (ages ~${dy[1].startAge}–${dy[2].endAge}, ${birthYear + dy[1].startAge}–${birthYear + dy[2].endAge}): ${dy[1].stemBranch.stem}${dy[1].stemBranch.branch} → ${dy[2].stemBranch.stem}${dy[2].stemBranch.branch} — ${TG_EN[dy[1].tenGod]} → ${TG_EN[dy[2].tenGod]}. Your golden window. ${dy[1].tenGod === '正财' || dy[1].tenGod === '偏财' ? 'Wealth track activates directly.' : dy[1].tenGod === '正官' || dy[1].tenGod === '七杀' ? 'Authority and institutional power crystallize.' : dy[1].tenGod === '食神' || dy[1].tenGod === '伤官' ? 'The talent-to-wealth conversion window.' : 'Core competencies solidify.'}\n\n• Harvest (${birthYear + dy[3].startAge}+): ${dy[3].stemBranch.stem}${dy[3].stemBranch.branch} decade. ${dy[3].tenGod === '正财' || dy[3].tenGod === '偏财' ? 'Wealth peaks.' : dy[3].tenGod === '正官' || dy[3].tenGod === '七杀' ? 'Status and influence reach their apex.' : 'A new cycle of transformation begins.'} Health management becomes critical.`);
   }
-  
-  return `Your life unfolds in three acts:\n\n• Foundation (ages ~${dy[0].startAge}–${dy[0].endAge}, ${birthYear + dy[0].startAge}–${birthYear + dy[0].endAge}): ${dy[0].stemBranch.stem}${dy[0].stemBranch.branch} decade — ${TG_EN[dy[0].tenGod]}. ${dy[0].tenGod === '食神' || dy[0].tenGod === '伤官' ? 'Expression era — intellectual growth and communication skills develop.' : dy[0].tenGod === '正印' || dy[0].tenGod === '偏印' ? 'Seal era — academic success and mentor support.' : dy[0].tenGod === '正官' || dy[0].tenGod === '七杀' ? 'Authority era — discipline and resilience are forged here.' : 'Foundation-building, storing energy for later acceleration.'}\n\n• Prime (ages ~${dy[1].startAge}–${dy[2].endAge}, ${birthYear + dy[1].startAge}–${birthYear + dy[2].endAge}): ${dy[1].stemBranch.stem}${dy[1].stemBranch.branch} → ${dy[2].stemBranch.stem}${dy[2].stemBranch.branch} — ${TG_EN[dy[1].tenGod]} → ${TG_EN[dy[2].tenGod]}. Your golden window. ${dy[1].tenGod === '正财' || dy[1].tenGod === '偏财' ? 'Wealth track activates directly.' : dy[1].tenGod === '正官' || dy[1].tenGod === '七杀' ? 'Authority and institutional power crystallize.' : dy[1].tenGod === '食神' || dy[1].tenGod === '伤官' ? 'The talent-to-wealth conversion window.' : 'Core competencies solidify.'}\n\n• Harvest (${birthYear + dy[3].startAge}+): ${dy[3].stemBranch.stem}${dy[3].stemBranch.branch} decade. ${dy[3].tenGod === '正财' || dy[3].tenGod === '偏财' ? 'Wealth peaks.' : dy[3].tenGod === '正官' || dy[3].tenGod === '七杀' ? 'Status and influence reach their apex.' : 'A new cycle of transformation begins.'} Health management becomes critical.`;
+
+  // Yi Jing hexagram narrative
+  const favEl = a.favorableElement;
+  const hexReading = getHexagramReading(favEl, f.dmElement);
+  if (hexReading) {
+    if (L) {
+      parts.push(`\n\n【易经卦象指引】${hexReading.name.zh}——${hexReading.meaning.zh}`);
+    } else {
+      parts.push(`\n\n[Yi Jing Hexagram Guidance] ${hexReading.name.en} — ${hexReading.meaning.en}`);
+    }
+  }
+
+  // Transition windows
+  const transitions = f.timingWindows.filter(tw => tw.type === 'transition');
+  if (transitions.length > 0) {
+    if (L) {
+      parts.push(`\n\n【重大转型窗口】${transitions.map(tw => tw.description.zh).join(' ')}`);
+    } else {
+      parts.push(`\n\n[Major Transition Windows] ${transitions.map(tw => tw.description.en).join(' ')}`);
+    }
+  }
+
+  return parts.join('');
 }
 
 export function generateSummary(a: BaziAnalysis, f: ChartFeatures, L: boolean): string {
@@ -575,9 +767,31 @@ export function generateSummary(a: BaziAnalysis, f: ChartFeatures, L: boolean): 
       earth: '土命人最忌迟缓——稳不等于慢。该出手时绝不犹豫。',
     };
     parts.push(dmAdvice[f.dmElement]);
+
+    // Formation in summary
+    if (f.formation && f.formation.type !== '无格局') {
+      parts.push(`格局：${f.formation.type}（${f.formation.quality === 'noble' ? '贵格' : f.formation.quality === 'positive' ? '吉格' : f.formation.quality === 'neutral' ? '中性' : '挑战'}）。${f.formation.description.zh}`);
+    }
+
+    // Key shensha in summary
+    const keyShensha = f.shensha.filter(s => s.category === 'auspicious').slice(0, 3);
+    if (keyShensha.length > 0) {
+      parts.push(`命带吉星：${keyShensha.map(s => s.name).join('、')}。`);
+    }
+
+    // Nayin interpretation in summary
+    if (f.nayinInterpretation) {
+      parts.push(`纳音：${f.nayinInterpretation.nayin}。${f.nayinInterpretation.personality.zh}`);
+    }
+
+    // Key timing windows
+    const careerWindows = f.timingWindows.filter(tw => tw.type === 'career' && tw.confidence === 'high').slice(0, 2);
+    if (careerWindows.length > 0) {
+      parts.push(`关键事业窗口：${careerWindows.map(tw => `${tw.ageRange[0]}-${tw.ageRange[1]}岁（${tw.tenGodTrigger}运）`).join('、')}。`);
+    }
   } else {
     parts.push(`Your chart profile: ${f.dmStem} ${EL_EN[f.dmElement]} Day Master, ${f.isStrong ? 'strong' : 'gentle'} constitution. Element balance: ${els.map(([e, v]) => `${EL_EN[e]} ${v.toFixed(1)}`).join(', ')}.${f.wealthStarCount >= 2 ? ` ${f.wealthStarCount} wealth stars — strong financial affinity.` : ''}${f.officerStarCount >= 2 ? ` ${f.officerStarCount} authority stars — institutional power.` : ''}${f.outputStarCount >= 2 ? ` ${f.outputStarCount} output stars — exceptional expressiveness.` : ''}`);
-    
+
     if (f.internalClashes.length > 0) {
       parts.push(`Internal ${f.internalClashes.map(c => `${c.b1}-${c.b2} clash (${POS_EN[c.pos1]} ↔ ${POS_EN[c.pos2]})`).join('; ')} — high internal tension drives ambition but drains energy. Find balance within the conflict.`);
     }
@@ -598,8 +812,30 @@ export function generateSummary(a: BaziAnalysis, f: ChartFeatures, L: boolean): 
       earth: "Earth's fatal flaw is inertia — stable doesn't mean slow. When it's time to move, move decisively.",
     };
     parts.push(dmAdvice[f.dmElement]);
+
+    // Formation in summary
+    if (f.formation && f.formation.type !== '无格局') {
+      parts.push(`Formation: ${f.formation.type} (${f.formation.quality}). ${f.formation.description.en}`);
+    }
+
+    // Key shensha in summary
+    const keyShensha = f.shensha.filter(s => s.category === 'auspicious').slice(0, 3);
+    if (keyShensha.length > 0) {
+      parts.push(`Auspicious stars present: ${keyShensha.map(s => s.name).join(', ')}.`);
+    }
+
+    // Nayin interpretation in summary
+    if (f.nayinInterpretation) {
+      parts.push(`Nayin: ${f.nayinInterpretation.nayin}. ${f.nayinInterpretation.personality.en}`);
+    }
+
+    // Key timing windows
+    const careerWindowsEn = f.timingWindows.filter(tw => tw.type === 'career' && tw.confidence === 'high').slice(0, 2);
+    if (careerWindowsEn.length > 0) {
+      parts.push(`Key career windows: ${careerWindowsEn.map(tw => `ages ${tw.ageRange[0]}-${tw.ageRange[1]} (${TG_EN[tw.tenGodTrigger]})`).join(', ')}.`);
+    }
   }
-  
+
   return parts.join('\n\n');
 }
 

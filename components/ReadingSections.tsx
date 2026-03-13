@@ -1,12 +1,16 @@
 'use client';
 
-import { Language, BaziAnalysis, BirthInput } from '@/lib/types';
+import { Language, BaziAnalysis, ExtendedBaziAnalysis, BirthInput } from '@/lib/types';
 import { STEM_ELEMENT, ELEMENT_CHINESE, ELEMENT_EN } from '@/lib/bazi';
 import { t, TEN_GOD_EN } from '@/lib/i18n';
 import { extractFeatures, generateDayMasterReading, generateChartStructure, generateCareerReading, generateRelationshipReading, generateHealthReading, generateTrajectory, generateSummary } from '@/lib/readings';
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer } from 'recharts';
+import FormationDisplay from './FormationDisplay';
+import ShenshaDisplay from './ShenshaDisplay';
+import NayinReading from './NayinReading';
+import TimingWindows from './TimingWindows';
 
-interface Props { analysis: BaziAnalysis; input: BirthInput; lang: Language; }
+interface Props { analysis: BaziAnalysis | ExtendedBaziAnalysis; input: BirthInput; lang: Language; }
 
 const FILLS: Record<string, string> = { wood:'#4CAF50', fire:'#E53935', earth:'#D4A843', metal:'#78909C', water:'#1E88E5' };
 
@@ -26,6 +30,8 @@ export default function ReadingSections({ analysis, input, lang }: Props) {
   const f = extractFeatures(analysis, input);
   const dm = generateDayMasterReading(f, L);
   const ec = analysis.elementCounts;
+  const isExtended = 'formation' in analysis;
+  const ext = isExtended ? (analysis as ExtendedBaziAnalysis) : null;
 
   return (
     <>
@@ -87,11 +93,33 @@ export default function ReadingSections({ analysis, input, lang }: Props) {
 
       <div className="shimmer-line" />
 
+      {/* Formation Display */}
+      {ext?.formation && ext.formation.type !== '无格局' && (
+        <FormationDisplay formation={ext.formation} lang={lang} />
+      )}
+
+      {/* Shensha Display */}
+      {ext?.shensha && ext.shensha.length > 0 && (
+        <ShenshaDisplay shensha={ext.shensha} lang={lang} />
+      )}
+
+      {/* Nayin Reading */}
+      {ext?.nayinInterpretation && (
+        <NayinReading nayin={ext.nayinInterpretation} dayNayin={analysis.dayNayin} lang={lang} />
+      )}
+
+      <div className="shimmer-line" />
+
       {/* Four Focus Areas */}
       <Section title={L ? '事业财运' : 'Career & Wealth'} icon="💼" content={generateCareerReading(analysis, f, L)} />
       <Section title={L ? '姻缘' : 'Relationships'} icon="💕" content={generateRelationshipReading(analysis, f, L)} />
       <Section title={L ? '健康' : 'Health'} icon="🏥" content={generateHealthReading(analysis, f, L)} />
       <Section title={L ? '大运总论' : 'Life Trajectory'} icon="🌟" content={generateTrajectory(analysis, f, input.year, L)} />
+
+      {/* Timing Windows */}
+      {ext?.timingWindows && ext.timingWindows.length > 0 && (
+        <TimingWindows windows={ext.timingWindows} lang={lang} />
+      )}
 
       <div className="shimmer-line" />
 

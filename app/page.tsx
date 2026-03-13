@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Language, BirthInput, Gender, BaziAnalysis, Theme } from '@/lib/types';
-import { analyzeBazi, SHICHEN } from '@/lib/bazi';
+import { Language, BirthInput, Gender, ExtendedBaziAnalysis, Theme } from '@/lib/types';
+import { SHICHEN } from '@/lib/bazi';
+import { analyzeExtended } from '@/lib/bazi-extended';
 import { t } from '@/lib/i18n';
 import FourPillarsDisplay from '@/components/FourPillars';
 import DayMasterAnalysis from '@/components/DayMasterAnalysis';
@@ -24,7 +25,7 @@ export default function Home() {
   const [input, setInput] = useState<BirthInput>({
     year: 1997, month: 12, day: 13, hour: -1, gender: 'female',
   });
-  const [analysis, setAnalysis] = useState<BaziAnalysis | null>(null);
+  const [analysis, setAnalysis] = useState<ExtendedBaziAnalysis | null>(null);
   const [timelineStart, setTimelineStart] = useState(2016);
   const [timelineEnd, setTimelineEnd] = useState(2035);
 
@@ -34,7 +35,7 @@ export default function Home() {
   }, [theme]);
 
   const handleCalculate = () => {
-    const result = analyzeBazi(input);
+    const result = analyzeExtended(input);
     setAnalysis(result);
   };
 
